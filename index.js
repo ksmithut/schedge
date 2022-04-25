@@ -2,8 +2,9 @@ import crypto from 'node:crypto'
 import 'dotenv/config'
 import express from 'express'
 import cookieParser from 'cookie-parser'
-import { fetch } from 'undici'
 import prismaClient from '@prisma/client'
+import wrap from './lib/wrap.js'
+import { requireSessionUser } from './lib/auth.js'
 
 const {
   PORT = '3000',
@@ -20,14 +21,46 @@ app.set('view engine', 'pug')
 app.set('views', new URL('./views/', import.meta.url).pathname)
 
 app.use(cookieParser(COOKIE_SECRETS.trim().split(/\s+/)))
+app.use(
+  wrap(async (req, res, next) => {
+    const sessionId = req.signedCookies.sid
+    if (!sessionId) return next()
+    const session = await prisma.session.findFirst({
+      where: {
+        id: sessionId,
+        expiresAt: { gt: new Date() },
+        revokedAt: null
+      },
+      include: { user: { include: { githubUser: true } } }
+    })
+    if (session) {
+      res.locals.user = session.user
+      res.locals.session = session
+    }
+    next()
+  })
+)
 
-app.get('/', (req, res) => {
+app.get('/', requireSessionUser(), (req, res) => {
   res.render('index', { title: 'Home' })
 })
 
 app.get('/login', (req, res) => {
   res.render('login', { title: 'Login' })
 })
+
+app.get(
+  '/logout',
+  wrap(async (req, res) => {
+    if (res.locals.session) {
+      await prisma.session.delete({
+        where: { id: res.locals.session.id }
+      })
+    }
+    res.clearCookie('sid')
+    res.redirect('/')
+  })
+)
 
 app.get('/login/github', (req, res) => {
   const state = crypto.randomUUID()
@@ -38,8 +71,8 @@ app.get('/login/github', (req, res) => {
   redirectURL.searchParams.set('state', state)
   res.cookie('github_oauth_state', state, {
     httpOnly: true,
-    maxAge: 300,
-    sameSite: 'strict',
+    maxAge: 300 * 1000,
+    sameSite: 'lax',
     signed: true
   })
   res.redirect(redirectURL.toString())
@@ -48,6 +81,7 @@ app.get('/login/github', (req, res) => {
 app.get('/login/github/callback', (req, res, next) => {
   const { code, state } = req.query
   const reqState = req.signedCookies.github_oauth_state
+  res.clearCookie('github_oauth_state')
   if (state !== reqState) return res.redirect('/login')
   const accessTokenURL = new URL('https://github.com/login/oauth/access_token')
   accessTokenURL.searchParams.set('client_id', GITHUB_CLIENT_ID)
@@ -108,7 +142,7 @@ app.get('/login/github/callback', (req, res, next) => {
       res.cookie('sid', session.id, {
         httpOnly: true,
         expires: session.expiresAt,
-        sameSite: 'strict',
+        sameSite: 'lax',
         signed: true
       })
       res.redirect('/')
