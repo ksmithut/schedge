@@ -3,6 +3,7 @@ import 'dotenv/config'
 import express from 'express'
 import cookieParser from 'cookie-parser'
 import { fetch } from 'undici'
+import prismaClient from '@prisma/client'
 
 const {
   PORT = '3000',
@@ -12,6 +13,7 @@ const {
   COOKIE_SECRETS
 } = process.env
 
+const prisma = new prismaClient.PrismaClient()
 const app = express()
 
 app.set('view engine', 'pug')
@@ -60,7 +62,56 @@ app.get('/login/github/callback', (req, res, next) => {
   })
     .then(response => response.json())
     .then(data => {
-      res.json(data)
+      return fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `token ${data.access_token}`
+        }
+      })
+    })
+    .then(response => response.json())
+    .then(user => {
+      return prisma.githubUser.upsert({
+        where: {
+          id: user.node_id
+        },
+        update: {
+          login: user.login,
+          avatarURL: user.avatar_url
+        },
+        create: {
+          id: user.node_id,
+          avatarURL: user.avatar_url,
+          login: user.login,
+          user: {
+            create: {
+              id: crypto.randomUUID(),
+              username: user.login
+            }
+          }
+        }
+      })
+    })
+    .then(githubUser => {
+      const now = new Date()
+      const expiresAt = new Date(now)
+      expiresAt.setDate(expiresAt.getDate() + 14)
+      return prisma.session.create({
+        data: {
+          id: crypto.randomUUID(),
+          userId: githubUser.userId,
+          createdAt: now,
+          expiresAt
+        }
+      })
+    })
+    .then(session => {
+      res.cookie('sid', session.id, {
+        httpOnly: true,
+        expires: session.expiresAt,
+        sameSite: 'strict',
+        signed: true
+      })
+      res.redirect('/')
     })
     .catch(next)
 })
