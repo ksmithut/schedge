@@ -3,6 +3,7 @@ import 'dotenv/config'
 import express from 'express'
 import cookieParser from 'cookie-parser'
 import prismaClient from '@prisma/client'
+import { z } from 'zod'
 import wrap from './lib/wrap.js'
 import { requireSessionUser } from './lib/auth.js'
 
@@ -41,24 +42,58 @@ app.use(
   })
 )
 
-app.get('/', requireSessionUser(), (req, res) => {
-  res.render('reminder/index', {
-    reminders: []
+app.get(
+  '/',
+  requireSessionUser(),
+  wrap(async (req, res) => {
+    const reminders = await prisma.reminder.findMany({
+      where: {
+        userId: res.locals.user.id
+      }
+    })
+    res.render('reminder/index', {
+      reminders
+    })
   })
-})
+)
 
 app.get('/new', requireSessionUser(), (req, res) => {
   res.render('reminder/new')
+})
+
+const newReminderSchema = z.object({
+  label: z.string().min(2),
+  date: z.string().transform(date => {
+    return z.date().parse(new Date(date))
+  })
 })
 
 app.post(
   '/new',
   requireSessionUser(),
   express.urlencoded({ extended: true }),
-  (req, res) => {
-    console.log(req.body)
-    res.render('reminder/new')
-  }
+  wrap(async (req, res) => {
+    const result = newReminderSchema.safeParse(req.body)
+    if (result.success) {
+      await prisma.reminder.create({
+        data: {
+          id: crypto.randomUUID(),
+          date: result.data.date,
+          label: result.data.label,
+          userId: res.locals.user.id
+        }
+      })
+      return res.redirect('/')
+    }
+    const errors = result.error.issues.reduce((errors, issue) => {
+      errors[issue.path.join('.')] = issue
+      return errors
+    }, {})
+    console.log(errors)
+    res.render('reminder/new', {
+      errors
+    })
+  })
 )
 
 app.get('/login', (req, res) => {

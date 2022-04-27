@@ -7,9 +7,13 @@ block content
       label
         span Label&nbsp;
         input(name='label' required)
+        if errors && errors.label
+          p= errors.label.message
     div
       label
         span Date&nbsp;
         input(name='date' type='datetime-local' required)
     div
       button(type='submit') Create
+    div
+      a(href='/') Cancel
