@@ -15,11 +15,12 @@ model User {
   username   String
   sessions   Session[]
   githubUser GithubUser?
+  reminders  Reminder[]
 }
 
 model Session {
   id        String    @id
-  user      User      @relation(fields: [userId], references: [id])
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
   createdAt DateTime
   expiresAt DateTime
@@ -30,6 +31,15 @@ model GithubUser {
   id        String @unique
   login     String
   avatarURL String
-  user      User   @relation(fields: [userId], references: [id])
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String @id
+}
+
+model Reminder {
+  id          String    @id
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  label       String
+  date        DateTime
+  completedAt DateTime?
 }

@@ -1,0 +1,15 @@
+extends ../templates/layout.pug
+
+block content
+  h1 New Schedge
+  form(action='/new' method='POST')
+    div
+      label
+        span Label&nbsp;
+        input(name='label' required)
+    div
+      label
+        span Date&nbsp;
+        input(name='date' type='datetime-local' required)
+    div
+      button(type='submit') Create

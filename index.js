@@ -42,8 +42,24 @@ app.use(
 )
 
 app.get('/', requireSessionUser(), (req, res) => {
-  res.render('index', { title: 'Home' })
+  res.render('reminder/index', {
+    reminders: []
+  })
 })
+
+app.get('/new', requireSessionUser(), (req, res) => {
+  res.render('reminder/new')
+})
+
+app.post(
+  '/new',
+  requireSessionUser(),
+  express.urlencoded({ extended: true }),
+  (req, res) => {
+    console.log(req.body)
+    res.render('reminder/new')
+  }
+)
 
 app.get('/login', (req, res) => {
   res.render('login', { title: 'Login' })

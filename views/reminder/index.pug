@@ -1,0 +1,18 @@
+extends ../templates/layout.pug
+
+block content
+  h1 Schedges
+  a(href='/new') Create new Schedge
+  table
+    thead
+      tr
+        th Label
+        th When
+        th Completed
+    tbody
+      each reminder in reminders
+        tr
+          td= reminder.label
+          td= reminder.date.toISOString()
+          td= reminder.completedAt && reminder.completedAt.toISOString()
+
