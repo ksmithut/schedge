@@ -2,17 +2,19 @@ extends ../templates/layout.pug
 
 block content
   h1 New Schedge
-  form(action='/new' method='POST')
+  form(method='POST')
     div
       label
         span Label&nbsp;
         input(name='label' required)
-        if errors && errors.label
-          p= errors.label.message
+      if errors && errors.label
+        p= errors.label.message
     div
       label
         span Date&nbsp;
         input(name='date' type='datetime-local' required)
+      if errors && errors.date
+        p= errors.label.message
     div
       button(type='submit') Create
     div

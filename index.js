@@ -46,6 +46,13 @@ app.get(
   '/',
   requireSessionUser(),
   wrap(async (req, res) => {
+    res.render('index')
+  })
+)
+
+app.get(
+  '/reminders',
+  wrap(async (req, res) => {
     const reminders = await prisma.reminder.findMany({
       where: {
         userId: res.locals.user.id
@@ -57,44 +64,44 @@ app.get(
   })
 )
 
-app.get('/new', requireSessionUser(), (req, res) => {
-  res.render('reminder/new')
-})
-
 const newReminderSchema = z.object({
   label: z.string().min(2),
-  date: z.string().transform(date => {
-    return z.date().parse(new Date(date))
-  })
+  date: z
+    .string()
+    .refine(val => !Number.isNaN(new Date(val).getTime()))
+    .transform(date => z.date().parse(new Date(date)))
 })
 
-app.post(
-  '/new',
-  requireSessionUser(),
-  express.urlencoded({ extended: true }),
-  wrap(async (req, res) => {
-    const result = newReminderSchema.safeParse(req.body)
-    if (result.success) {
-      await prisma.reminder.create({
-        data: {
-          id: crypto.randomUUID(),
-          date: result.data.date,
-          label: result.data.label,
-          userId: res.locals.user.id
-        }
-      })
-      return res.redirect('/')
-    }
-    const errors = result.error.issues.reduce((errors, issue) => {
-      errors[issue.path.join('.')] = issue
-      return errors
-    }, {})
-    console.log(errors)
-    res.render('reminder/new', {
-      errors
-    })
+app
+  .route('/reminders/new')
+  .get(requireSessionUser(), (req, res) => {
+    res.render('reminder/new')
   })
-)
+  .post(
+    requireSessionUser(),
+    express.urlencoded({ extended: true }),
+    wrap(async (req, res) => {
+      const result = newReminderSchema.safeParse(req.body)
+      if (result.success) {
+        await prisma.reminder.create({
+          data: {
+            id: crypto.randomUUID(),
+            date: result.data.date,
+            label: result.data.label,
+            userId: res.locals.user.id
+          }
+        })
+        return res.redirect('/reminders')
+      }
+      const errors = result.error.issues.reduce((errors, issue) => {
+        errors[issue.path.join('.')] = issue
+        return errors
+      }, {})
+      res.render('reminder/new', {
+        errors
+      })
+    })
+  )
 
 app.get('/login', (req, res) => {
   res.render('login', { title: 'Login' })

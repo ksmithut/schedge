@@ -4,5 +4,7 @@ block content
   if user
     p Welcome #{user.username}
     a(href='/logout') Log Out
+    p
+      a(href='/reminders') Reminders
   else
     a(href='/login') Login

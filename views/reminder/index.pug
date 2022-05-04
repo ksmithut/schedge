@@ -2,17 +2,20 @@ extends ../templates/layout.pug
 
 block content
   h1 Schedges
-  a(href='/new') Create new Schedge
+  a(href='/reminders/new') Create new Schedge
   table
     thead
       tr
         th Label
         th When
         th Completed
+        th Actions
     tbody
       each reminder in reminders
         tr
           td= reminder.label
           td= reminder.date.toISOString()
           td= reminder.completedAt && reminder.completedAt.toISOString()
+          td
+            a(href=`/reminders/${reminder.id}/edit`) Edit
 
