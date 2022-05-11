@@ -3,6 +3,7 @@ import 'dotenv/config'
 import express from 'express'
 import cookieParser from 'cookie-parser'
 import prismaClient from '@prisma/client'
+import argon2 from 'argon2'
 import { z } from 'zod'
 import wrap from './lib/wrap.js'
 import { requireSessionUser } from './lib/auth.js'
@@ -52,6 +53,7 @@ app.get(
 
 app.get(
   '/reminders',
+  requireSessionUser(),
   wrap(async (req, res) => {
     const reminders = await prisma.reminder.findMany({
       where: {
@@ -103,6 +105,113 @@ app
     })
   )
 
+app.get(
+  '/clients',
+  requireSessionUser(),
+  wrap(async (req, res) => {
+    const clients = await prisma.clientApplication.findMany({
+      where: {
+        ownerId: res.locals.user.id
+      }
+    })
+    res.render('client/index', { clients })
+  })
+)
+
+const newClientSchema = z.object({
+  name: z.string().min(2),
+  redirectURIs: z
+    .string()
+    .refine(redirectURIs => {
+      try {
+        const uris = redirectURIs
+          .trim()
+          .split('\n')
+          .map(line => line.trim())
+          .filter(Boolean)
+          .map(line => new URL(line.trim()))
+        if (uris.length < 1) return false
+        return true
+      } catch {
+        return false
+      }
+    }, 'Must be at least one redirect uri')
+    .transform(redirectURIs => {
+      return z.array(z.string().url()).parse(
+        redirectURIs
+          .trim()
+          .split('\n')
+          .map(line => line.trim())
+          .filter(Boolean)
+      )
+    })
+})
+
+app
+  .route('/clients/new')
+  .get(
+    requireSessionUser(),
+    wrap(async (req, res) => {
+      res.render('client/new', { data: {} })
+    })
+  )
+  .post(
+    requireSessionUser(),
+    express.urlencoded({ extended: true }),
+    wrap(async (req, res) => {
+      const result = newClientSchema.safeParse(req.body)
+      if (result.success) {
+        const secret = crypto.randomUUID()
+        const secretHash = await argon2.hash(secret)
+        const client = await prisma.clientApplication.create({
+          data: {
+            id: crypto.randomUUID(),
+            name: result.data.name,
+            redirectURIs: JSON.stringify(result.data.redirectURIs),
+            secretHash,
+            ownerId: res.locals.user.id
+          }
+        })
+        return res.render('client/show', { client, secret })
+      }
+      const errors = result.error.issues.reduce((errors, issue) => {
+        errors[issue.path.join('.')] = issue
+        return errors
+      }, {})
+      res.render('client/new', {
+        errors,
+        data: req.body
+      })
+    })
+  )
+
+app.get(
+  '/clients/:id',
+  requireSessionUser(),
+  wrap(async (req, res) => {
+    const client = await prisma.clientApplication.findFirst({
+      where: {
+        id: req.params.id,
+        ownerId: res.locals.user.id
+      }
+    })
+    if (!client) return res.render('404')
+    res.render('client/show', { client })
+  })
+)
+
+app.get(
+  '/oauth/authorize',
+  requireSessionUser(),
+  wrap(async (req, res) => {})
+)
+
+app.get(
+  '/oauth/token',
+  requireSessionUser(),
+  wrap(async (req, res) => {})
+)
+
 app.get('/login', (req, res) => {
   res.render('login', { title: 'Login' })
 })
@@ -136,77 +245,73 @@ app.get('/login/github', (req, res) => {
   res.redirect(redirectURL.toString())
 })
 
-app.get('/login/github/callback', (req, res, next) => {
-  const { code, state } = req.query
-  const reqState = req.signedCookies.github_oauth_state
-  res.clearCookie('github_oauth_state')
-  if (state !== reqState) return res.redirect('/login')
-  const accessTokenURL = new URL('https://github.com/login/oauth/access_token')
-  accessTokenURL.searchParams.set('client_id', GITHUB_CLIENT_ID)
-  accessTokenURL.searchParams.set('client_secret', GITHUB_CLIENT_SECRET)
-  accessTokenURL.searchParams.set('code', code)
-  accessTokenURL.searchParams.set('redirect_uri', GITHUB_REDIRECT_URI)
-  fetch(accessTokenURL.toString(), {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json'
-    }
-  })
-    .then(response => response.json())
-    .then(data => {
-      return fetch('https://api.github.com/user', {
-        headers: {
-          Authorization: `token ${data.access_token}`
-        }
-      })
+app.get(
+  '/login/github/callback',
+  wrap(async (req, res, next) => {
+    const { code, state } = req.query
+    const reqState = req.signedCookies.github_oauth_state
+    res.clearCookie('github_oauth_state')
+    if (state !== reqState) return res.redirect('/login')
+    const accessTokenURL = new URL(
+      'https://github.com/login/oauth/access_token'
+    )
+    accessTokenURL.searchParams.set('client_id', GITHUB_CLIENT_ID)
+    accessTokenURL.searchParams.set('client_secret', GITHUB_CLIENT_SECRET)
+    accessTokenURL.searchParams.set('code', code)
+    accessTokenURL.searchParams.set('redirect_uri', GITHUB_REDIRECT_URI)
+    const tokenResponse = await fetch(accessTokenURL.toString(), {
+      method: 'POST',
+      headers: { Accept: 'application/json' }
     })
-    .then(response => response.json())
-    .then(user => {
-      return prisma.githubUser.upsert({
-        where: {
-          id: user.node_id
-        },
-        update: {
-          login: user.login,
-          avatarURL: user.avatar_url
-        },
-        create: {
-          id: user.node_id,
-          avatarURL: user.avatar_url,
-          login: user.login,
-          user: {
-            create: {
-              id: crypto.randomUUID(),
-              username: user.login
-            }
+    if (!tokenResponse.ok) throw new Error('Error getting token from github')
+    const tokenResponseBody = await tokenResponse.json()
+    const userResponse = await fetch('https://api.github.com/user', {
+      headers: { Authorization: `token ${tokenResponseBody.access_token}` }
+    })
+    if (!userResponse.ok) throw new Error('Error fetching user from github')
+    const user = await userResponse.json()
+    const githubUser = await prisma.githubUser.upsert({
+      where: {
+        id: user.node_id
+      },
+      update: {
+        login: user.login,
+        avatarURL: user.avatar_url
+      },
+      create: {
+        id: user.node_id,
+        avatarURL: user.avatar_url,
+        login: user.login,
+        user: {
+          create: {
+            id: crypto.randomUUID(),
+            username: user.login
           }
         }
-      })
+      }
     })
-    .then(githubUser => {
-      const now = new Date()
-      const expiresAt = new Date(now)
-      expiresAt.setDate(expiresAt.getDate() + 14)
-      return prisma.session.create({
-        data: {
-          id: crypto.randomUUID(),
-          userId: githubUser.userId,
-          createdAt: now,
-          expiresAt
-        }
-      })
+    const now = new Date()
+    const expiresAt = new Date(now)
+    expiresAt.setDate(expiresAt.getDate() + 14)
+    const session = await prisma.session.create({
+      data: {
+        id: crypto.randomUUID(),
+        userId: githubUser.userId,
+        createdAt: now,
+        expiresAt
+      }
     })
-    .then(session => {
-      res.cookie('sid', session.id, {
-        httpOnly: true,
-        expires: session.expiresAt,
-        sameSite: 'lax',
-        signed: true
-      })
-      res.redirect('/')
+    res.cookie('sid', session.id, {
+      httpOnly: true,
+      expires: session.expiresAt,
+      sameSite: 'lax',
+      signed: true
     })
-    .catch(next)
-})
+    res.clearCookie('return_to')
+    const returnTo = req.signedCookies.return_to ?? '/'
+    res.redirect(returnTo)
+  })
+)
 
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`)

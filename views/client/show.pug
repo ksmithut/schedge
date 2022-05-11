@@ -1,0 +1,17 @@
+extends ../templates/layout.pug
+block content
+  h1= client.name
+  if secret
+    dl
+      dt Secret (This will not show again)
+      dd
+        code= secret
+  dl
+    dt Client Id
+    dd
+      code= client.id
+  dl
+    dt Redirect URIs
+    each redirectURI in JSON.parse(client.redirectURIs)
+      dd= redirectURI
+

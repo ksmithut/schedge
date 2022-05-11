@@ -3,4 +3,11 @@ html
   head
     title= title
   body
+    if user
+      nav
+        ul
+          li
+            a(href='/reminders') Reminders
+          li
+            a(href='/clients') Clients
     block content

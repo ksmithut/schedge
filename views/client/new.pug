@@ -1,0 +1,23 @@
+extends ../templates/layout.pug
+block content
+  h1 New OAuth2 Client Application
+  form(method='POST')
+    div
+      label
+        span Name&nbsp;
+        input(name='name' required value=data.name)
+      if errors && errors.name
+        p= errors.name.message
+    div
+      label
+        span Redirect URIs
+        br
+        span Enter a URI per line
+        br
+        textarea(name='redirectURIs' required)= data.redirectURIs
+      if errors && errors.redirectURIs
+        p= errors.redirectURIs.message
+    div
+      button(type='submit') Create
+    div
+      a(href='/clients') Cancel

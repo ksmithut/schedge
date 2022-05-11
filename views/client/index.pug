@@ -1,0 +1,8 @@
+extends ../templates/layout.pug
+block content
+  h1 OAuth2 Client Applications
+  a(href='/clients/new') Create new Client
+  ul
+    each client in clients
+      li
+        a(href=`/clients/${client.id}`)= client.name
