@@ -203,13 +203,18 @@ app.get(
 app.get(
   '/oauth/authorize',
   requireSessionUser(),
-  wrap(async (req, res) => {})
+  wrap(async (req, res) => {
+    res.json(req.query)
+  })
 )
 
-app.get(
+app.post(
   '/oauth/token',
-  requireSessionUser(),
-  wrap(async (req, res) => {})
+  express.json(),
+  express.urlencoded({ extended: false }),
+  wrap(async (req, res) => {
+    res.json(req.body)
+  })
 )
 
 app.get('/login', (req, res) => {
