@@ -200,11 +200,73 @@ app.get(
   })
 )
 
+const authorizationQuerySchema = z.object({
+  client_id: z.string(),
+  scope: z.string().default(''),
+  response_type: z.enum(['code']),
+  redirect_uri: z.string()
+})
+
+app.post(
+  '/clients/:id/authorize',
+  requireSessionUser(),
+  express.urlencoded({ extended: false }),
+  wrap(async (req, res) => {
+    await prisma.clientAuthorization.upsert({
+      where: {
+        clientApplicationId_userId: {
+          clientApplicationId: req.params.id,
+          userId: res.locals.user.id
+        }
+      },
+      create: {
+        createdAt: new Date(),
+        scope: req.body.scope,
+        clientApplicationId: req.params.id,
+        userId: res.locals.user.id
+      },
+      update: {
+        scope: req.body.scope
+      }
+    })
+    res.redirect(req.body.authorize_redirect)
+  })
+)
+
 app.get(
   '/oauth/authorize',
   requireSessionUser(),
   wrap(async (req, res) => {
-    res.json(req.query)
+    const query = authorizationQuerySchema.parse(req.query)
+    const client = await prisma.clientApplication.findUnique({
+      where: { id: query.client_id }
+    })
+    if (!client) throw new Error('No client found')
+    const redirectURIs = JSON.parse(client.redirectURIs)
+    if (!redirectURIs.includes(query.redirect_uri)) {
+      throw new Error('Invalid redirect uri')
+    }
+    const authoriation = await prisma.clientAuthorization.findUnique({
+      where: {
+        clientApplicationId_userId: {
+          clientApplicationId: query.client_id,
+          userId: res.locals.user.id
+        }
+      }
+    })
+    const scopes = query.scope
+      .trim()
+      .split(' ')
+      .filter(Boolean)
+    if (authoriation) {
+      return res.status(501).send('not implemented')
+    }
+    res.render('oauth/authorize', {
+      authorizeRedirect: req.originalUrl,
+      scope: query.scope,
+      scopes,
+      client
+    })
   })
 )
 

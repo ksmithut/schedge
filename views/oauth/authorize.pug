@@ -1,0 +1,14 @@
+extends ../templates/layout.pug
+
+
+block content
+  form(action=`/clients/${client.id}/authorize` method='post')
+    input(type='hidden' name='authorize_redirect' value=authorizeRedirect)
+    input(type='hidden' name='scope' value=scope)
+    h1 Authorize Application
+    p
+      strong #{client.name} would like your permission to access:
+    ul
+      each scope in scopes
+        li= scope
+    button(type='submit') Authorize
