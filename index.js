@@ -5,16 +5,20 @@ import cookieParser from 'cookie-parser'
 import prismaClient from '@prisma/client'
 import argon2 from 'argon2'
 import { z } from 'zod'
+import jwt from 'jsonwebtoken'
 import wrap from './lib/wrap.js'
-import { requireSessionUser } from './lib/auth.js'
+import { requireSessionUser, requireAPIUser } from './lib/auth.js'
 
 const {
   PORT = '3000',
   GITHUB_CLIENT_ID,
   GITHUB_CLIENT_SECRET,
   GITHUB_REDIRECT_URI,
-  COOKIE_SECRETS
+  COOKIE_SECRETS,
+  JWT_SECRETS
 } = process.env
+
+const secrets = JWT_SECRETS.split(' ')
 
 const prisma = new prismaClient.PrismaClient()
 const app = express()
@@ -40,6 +44,29 @@ app.use(
       res.locals.session = session
     }
     next()
+  }),
+  wrap(async (req, res, next) => {
+    const authorization = req.get('authorization')
+    if (!authorization) return next()
+    const [scheme, token] = authorization.split(' ')
+    if (scheme.toLowerCase() !== 'bearer') return next()
+    try {
+      const payload = jwt.verify(token, secrets[0], {
+        algorithms: ['HS256']
+      })
+      if (typeof payload.sub !== 'string') throw new Error('invalid payload')
+      const accessToken = await prisma.accessToken.findUnique({
+        where: { id: payload.sub ?? '' },
+        include: { user: true }
+      })
+      if (!accessToken) return res.status(401).json({ error: 'invalid token' })
+      res.locals.user = accessToken.user
+      res.locals.accessToken = accessToken
+      next()
+    } catch (err) {
+      console.error(err)
+      res.status(401).json({ error: 'invalid token' })
+    }
   })
 )
 
@@ -258,8 +285,29 @@ app.get(
       .trim()
       .split(' ')
       .filter(Boolean)
-    if (authoriation) {
-      return res.status(501).send('not implemented')
+    authCheck: if (authoriation) {
+      const authorizationScopes = authoriation.scope.split(' ')
+      const hasScopes = scopes.every(scope =>
+        authorizationScopes.includes(scope)
+      )
+      if (!hasScopes) break authCheck
+      const now = new Date()
+      const expiresAt = new Date(now)
+      expiresAt.setSeconds(expiresAt.getSeconds() + 30)
+      const code = crypto.randomBytes(18).toString('base64url')
+      await prisma.authorizationCode.create({
+        data: {
+          createdAt: now,
+          expiresAt,
+          clientApplicationId: client.id,
+          userId: res.locals.user.id,
+          code,
+          scope: authoriation.scope
+        }
+      })
+      const redirectURL = new URL(query.redirect_uri)
+      redirectURL.searchParams.set('code', code)
+      return res.redirect(redirectURL.toString())
     }
     res.render('oauth/authorize', {
       authorizeRedirect: req.originalUrl,
@@ -275,7 +323,74 @@ app.post(
   express.json(),
   express.urlencoded({ extended: false }),
   wrap(async (req, res) => {
-    res.json(req.body)
+    if (req.body.grant_type === 'authorization_code') {
+      console.log(req.body)
+      const now = new Date()
+      const authCode = await prisma.authorizationCode.findFirst({
+        where: {
+          code: req.body.code,
+          clientApplicationId: req.body.client_id,
+          expiresAt: { gt: now },
+          consumedAt: null
+        }
+      })
+      if (!authCode) return res.status(400).json({ error: 'Invalid auth code' })
+
+      const updateResult = await prisma.authorizationCode.updateMany({
+        where: {
+          code: req.body.code,
+          clientApplicationId: req.body.client_id,
+          expiresAt: { gt: now },
+          consumedAt: null
+        },
+        data: {
+          consumedAt: now
+        }
+      })
+      if (updateResult.count === 0) {
+        return res.status(400).json({ error: 'Invalid auth code' })
+      }
+      const client = await prisma.clientApplication.findUnique({
+        where: { id: req.body.client_id }
+      })
+      if (!client) {
+        return res.status(400).json({ error: 'Invalid client' })
+      }
+      const validSecret = await argon2.verify(
+        client.secretHash,
+        req.body.client_secret
+      )
+      if (!validSecret) {
+        return res.status(400).json({ error: 'Invalid client' })
+      }
+      const redirectURIs = JSON.parse(client.redirectURIs)
+      if (!redirectURIs.includes(req.body.redirect_uri)) {
+        return res.status(400).json({ error: 'Invalid redirect uri' })
+      }
+      const expirationSeconds = 3600
+      const expiresAt = new Date()
+      expiresAt.setSeconds(expiresAt.getSeconds() + expirationSeconds)
+      const accessToken = await prisma.accessToken.create({
+        data: {
+          id: crypto.randomUUID(),
+          clientApplicationId: authCode.clientApplicationId,
+          userId: authCode.userId,
+          expiresAt,
+          scope: authCode.scope
+        }
+      })
+      const token = jwt.sign(
+        { exp: Math.floor(expiresAt.getTime() / 1000) },
+        secrets[0],
+        { algorithm: 'HS256', subject: accessToken.id }
+      )
+      return res.json({
+        access_token: token,
+        expires_in: expirationSeconds,
+        token_type: 'Bearer'
+      })
+    }
+    res.status(400).json({ error: 'unsupported grant_type' })
   })
 )
 
@@ -377,6 +492,14 @@ app.get(
     res.clearCookie('return_to')
     const returnTo = req.signedCookies.return_to ?? '/'
     res.redirect(returnTo)
+  })
+)
+
+app.get(
+  '/api/me',
+  requireAPIUser({ scopes: ['profile'] }),
+  wrap(async (req, res, next) => {
+    res.json(res.locals.user)
   })
 )
 

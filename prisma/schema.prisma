@@ -81,6 +81,8 @@ model AuthorizationCode {
   clientApplicationId String
   createdAt           DateTime
   expiresAt           DateTime
+  scope               String
+  consumedAt          DateTime?
 }
 
 model RefreshToken {
@@ -100,4 +102,5 @@ model AccessToken {
   client              ClientApplication @relation(fields: [clientApplicationId], references: [id])
   clientApplicationId String
   expiresAt           DateTime
+  scope               String
 }

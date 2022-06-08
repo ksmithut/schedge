@@ -18,14 +18,25 @@ passport.use(
     {
       authorizationURL: 'http://localhost:3000/oauth/authorize',
       tokenURL: 'http://localhost:3000/oauth/token',
-      clientID: 'fad3b373-7e5f-41f8-b8cb-fd294e257361',
-      clientSecret: 'c0910e96-fee0-45bd-843f-69fdf9a57120',
+      clientID: '092ae554-0c26-4753-8e9b-0b7bb051a0d6',
+      clientSecret: '77844689-b66e-49ae-be29-a4e30e05652f',
       callbackURL: 'http://localhost:4000/auth/callback',
       scope: 'profile reminders'
     },
     (accessToken, refreshToken, results, profile, callback) => {
-      console.log({ accessToken, refreshToken, results, profile, callback })
-      callback(null, results)
+      fetch('http://localhost:3000/api/me', {
+        headers: {
+          Authorization: `${results.token_type} ${accessToken}`
+        }
+      })
+        .then(res => {
+          if (!res.ok) throw new Error('Error fetching profile')
+          return res.json()
+        })
+        .then(user => {
+          callback(null, user)
+        })
+        .catch(callback)
     }
   )
 )
@@ -45,7 +56,13 @@ app.use(
 app.use(passport.session())
 app.use(passport.initialize())
 
-app.get('/auth/callback', passport.authenticate('schedge'))
+app.get(
+  '/auth/callback',
+  passport.authenticate('schedge'),
+  (req, res, next) => {
+    res.redirect('/')
+  }
+)
 app.get('/login', passport.authenticate('schedge'))
 app.use((req, res, next) => {
   if (!req.user) return res.redirect('/login')
@@ -54,7 +71,7 @@ app.use((req, res, next) => {
 
 app.get('/', (req, res) => {
   console.log(req.user)
-  res.send('Hello World')
+  res.send(`Hello ${req.user.username}`)
 })
 
 app.listen(4000)
